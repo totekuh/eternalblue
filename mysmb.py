@@ -129,7 +129,11 @@ class MYSMB(smb.SMB):
         self._last_tid = 0  # last tid from connect_tree()
         self._last_fid = 0  # last fid from nt_create_andx()
         self._smbConn = None
-        smb.SMB.__init__(self, remote_host, remote_host, sess_port=remote_port, timeout=timeout)
+        try:
+            smb.SMB.__init__(self, remote_host, remote_host, sess_port=remote_port, timeout=timeout)
+        except Exception as e:
+            print('[-] ' + str(e))
+            sys.exit()
 
     def check_ms17_010(self):
         TRANS_PEEK_NMPIPE = 0x23
@@ -168,8 +172,6 @@ class MYSMB(smb.SMB):
         self.disconnect_tree(tid)
         if len(found_pipes) > 0:
             return found_pipes[0]
-        else:
-            return None
 
     def set_pid(self, pid):
         self._pid = pid
@@ -215,13 +217,14 @@ class MYSMB(smb.SMB):
         _setup_login_packet_hook(maxBufferSize)
         smb.SMB.login_extended(self, user, password, domain, lmhash, nthash, use_ntlmv2)
 
-    def login_or_fail(self, username, password):
+    def login_or_fail(self, username, password, maxBufferSize=None):
         try:
-            self.login(username, password)
+            self.login(username, password, maxBufferSize=maxBufferSize)
         except smb.SessionError as e:
             print('[-] Login failed: ' + nt_errors.ERROR_MESSAGES[e.error_code][0])
             sys.exit()
         finally:
+            print('[+] Connected.')
             print('[*] Target OS: ' + self.get_server_os())
 
     def connect_tree(self, path, password=None, service=smb.SERVICE_ANY, smb_packet=None):
@@ -485,6 +488,7 @@ class RemoteShell(cmd.Cmd):
         self.__serviceName = serviceName
         self.__rpc = rpc
         self.intro = '[!] Dropping a semi-interactive shell (remember to escape special chars with ^) \n[!] Executing ' \
+                     '' \
                      '' \
                      'interactive programs will hang shell!'
 

