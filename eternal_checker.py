@@ -1,12 +1,11 @@
-#!/usr/bin/env python
-from mysmb import MYSMB
-from impacket import smb, smbconnection, nt_errors
-from impacket.uuid import uuidtup_to_bin
-from impacket.dcerpc.v5.rpcrt import DCERPCException
-from struct import pack
-import sys
+#!/usr/bin/env python3
 import argparse
+import sys
+from struct import pack
 
+from impacket import nt_errors, smb
+
+from mysmb import MYSMB
 
 '''
 Script for
@@ -25,31 +24,36 @@ def check_ms17_010(conn):
         print('[-] The target is patched')
         sys.exit()
 
+
 def check_accessible_pipes(conn):
     print('=== Testing named pipes ===')
     conn.find_named_pipe(firstOnly=False)
 
+
 def main():
     parser = argparse.ArgumentParser()
-    
+
     parser.add_argument('target', action='store',
-    help='[[domain/]username[:password]@]<targetName or address>')
+                        help='[[domain/]username[:password]@]<targetName or address>')
 
     group = parser.add_argument_group('connection')
-    group.add_argument('-target-ip', action='store', metavar="ip address", 
-    help='IP Address of the target machine. If ommited it will use whatever was specified as target. This is useful when target is the NetBIOS name and you cannot resolve it')
+    group.add_argument('-target-ip', action='store', metavar="ip address",
+                       help='IP Address of the target machine. If ommited it will use whatever was specified as '
+                            'target. This is useful when target is the NetBIOS name and you cannot resolve it')
     group.add_argument('-port', choices=['139', '445'], nargs='?', default='445', metavar="destination port",
-    help='Destination port to connect to SMB Server')
+                       help='Destination port to connect to SMB Server')
 
-    if len(sys.argv)==1:
+    if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)
     options = parser.parse_args()
 
     import re
-    domain, username, password, remoteName = re.compile('(?:(?:([^/@:]*)/)?([^@:]*)(?::([^@]*))?@)?(.*)').match(options.target).groups('')
 
-    #In case the password contains '@'
+    domain, username, password, remoteName = re.compile('(?:(?:([^/@:]*)/)?([^@:]*)(?::([^@]*))?@)?(.*)').match(
+        options.target).groups('')
+
+    # In case the password contains '@'
     if '@' in remoteName:
         password = password + '@' + remoteName.rpartition('@')[0]
         remoteName = remoteName.rpartition('@')[2]
@@ -57,8 +61,10 @@ def main():
     if domain is None:
         domain = ''
 
-    if password == '' and username != '' and options.hashes is None and options.no_pass is False and options.aesKey is None:
+    if password == '' and username != '' and options.hashes is None and options.no_pass is False and options.aesKey \
+                is None:
         from getpass import getpass
+
         password = getpass("Password:")
 
     if options.target_ip is None:
@@ -73,7 +79,7 @@ def main():
     finally:
         print('[*] Target OS: ' + conn.get_server_os())
 
-    tid = conn.tree_connect_andx('\\\\'+options.target_ip+'\\'+'IPC$')
+    tid = conn.tree_connect_andx('\\\\' + options.target_ip + '\\' + 'IPC$')
     conn.set_default_tid(tid)
 
     check_ms17_010(conn)
@@ -84,7 +90,6 @@ def main():
     conn.get_socket().close()
 
     print('[*] Done')
-
 
 
 main()
