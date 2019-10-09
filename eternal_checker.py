@@ -1,9 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 import argparse
+import re
 import sys
-from struct import pack
-
-from impacket import nt_errors, smb
 
 from mysmb import MYSMB
 
@@ -14,44 +12,29 @@ Script for
 '''
 
 
-def check_ms17_010(conn):
-    TRANS_PEEK_NMPIPE = 0x23
-    recvPkt = conn.send_trans(pack('<H', TRANS_PEEK_NMPIPE), maxParameterCount=0xffff, maxDataCount=0x800)
-    status = recvPkt.getNTStatus()
-    if status == 0xC0000205:  # STATUS_INSUFF_SERVER_RESOURCES
-        print('[!] The target is not patched')
-    else:
-        print('[-] The target is patched')
-        sys.exit()
-
-
-def check_accessible_pipes(conn):
-    print('=== Testing named pipes ===')
-    conn.find_named_pipe(firstOnly=False)
-
-
-def main():
+def get_arguments():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('target', action='store',
                         help='[[domain/]username[:password]@]<targetName or address>')
 
     group = parser.add_argument_group('connection')
-    group.add_argument('-target-ip', action='store', metavar="ip address",
+    group.add_argument('--target-ip', action='store', metavar="ip address",
                        help='IP Address of the target machine. If ommited it will use whatever was specified as '
                             'target. This is useful when target is the NetBIOS name and you cannot resolve it')
-    group.add_argument('-port', choices=['139', '445'], nargs='?', default='445', metavar="destination port",
+    group.add_argument('--port', nargs='?', default='445', metavar="destination port",
                        help='Destination port to connect to SMB Server')
 
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)
     options = parser.parse_args()
+    return options
 
-    import re
 
+def parse_domain_and_credentials(options):
     domain, username, password, remoteName = re.compile('(?:(?:([^/@:]*)/)?([^@:]*)(?::([^@]*))?@)?(.*)').match(
-        options.target).groups('')
+                options.target).groups('')
 
     # In case the password contains '@'
     if '@' in remoteName:
@@ -69,27 +52,37 @@ def main():
 
     if options.target_ip is None:
         options.target_ip = remoteName
+    return domain, username, password, remoteName
 
-    conn = MYSMB(options.target_ip, int(options.port))
-    try:
-        conn.login(username, password)
-    except smb.SessionError as e:
-        print('[-] Login failed: ' + nt_errors.ERROR_MESSAGES[e.error_code][0])
-        sys.exit()
-    finally:
-        print('[*] Target OS: ' + conn.get_server_os())
 
-    tid = conn.tree_connect_andx('\\\\' + options.target_ip + '\\' + 'IPC$')
-    conn.set_default_tid(tid)
+def scan():
+    delimiter = '*' * 30
+    options = get_arguments()
 
-    check_ms17_010(conn)
-    check_accessible_pipes(conn)
+    domain, username, password, remoteName = parse_domain_and_credentials(options)
 
-    conn.disconnect_tree(tid)
-    conn.logoff()
-    conn.get_socket().close()
+    print('[*] Logging in...')
+    connection = MYSMB(options.target_ip, int(options.port))
+    connection.login_or_fail(username, password)
+    print(delimiter)
+
+    tid = connection.tree_connect_andx('\\\\' + options.target_ip + '\\' + 'IPC$')
+    connection.set_default_tid(tid)
+
+    print('[*] Checking for the MS17-010')
+    connection.check_ms17_010()
+    print(delimiter)
+
+    print('[*] Checking for the accessible pipes')
+    connection.find_named_pipe(firstOnly=False)
+    print(delimiter)
+
+    print('[*] MS17-010 scan has been finished, disconnecting...')
+    connection.disconnect_tree(tid)
+    connection.logoff()
+    connection.get_socket().close()
 
     print('[*] Done')
 
 
-main()
+scan()

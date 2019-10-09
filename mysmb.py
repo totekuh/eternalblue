@@ -5,10 +5,11 @@ import logging
 import os
 import random
 import string
+import sys
 from struct import pack
 from threading import Thread
 
-from impacket import smb, smbconnection
+from impacket import nt_errors, smb, smbconnection
 from impacket.dcerpc.v5 import scmr, transport
 
 
@@ -117,7 +118,7 @@ def _setup_login_packet_hook(maxBufferSize):
 
 
 class MYSMB(smb.SMB):
-    def __init__(self, remote_host, use_ntlmv2=True, timeout=8):
+    def __init__(self, remote_host, remote_port, use_ntlmv2=True, timeout=8):
         self.__use_ntlmv2 = use_ntlmv2
         self._default_tid = 0
         self._pid = os.getpid() & 0xffff
@@ -128,7 +129,18 @@ class MYSMB(smb.SMB):
         self._last_tid = 0  # last tid from connect_tree()
         self._last_fid = 0  # last fid from nt_create_andx()
         self._smbConn = None
-        smb.SMB.__init__(self, remote_host, remote_host, timeout=timeout)
+        smb.SMB.__init__(self, remote_host, remote_host, sess_port=remote_port, timeout=timeout)
+
+    def check_ms17_010(self):
+        TRANS_PEEK_NMPIPE = 0x23
+        recvPkt = self.send_trans(pack('<H', TRANS_PEEK_NMPIPE), maxParameterCount=0xffff, maxDataCount=0x800)
+        status = recvPkt.getNTStatus()
+        if status == 0xC0000205:  # STATUS_INSUFF_SERVER_RESOURCES
+            print('[!] The target is not patched')
+            return True
+        else:
+            print('[-] The target is patched')
+            sys.exit(1)
 
     def find_named_pipe(self, firstOnly=True):
         pipes_file = '/usr/share/metasploit-framework/data/wordlists/named_pipes.txt'
@@ -148,7 +160,7 @@ class MYSMB(smb.SMB):
                 fid = self.nt_create_andx(tid, pipe)
                 self.close(tid, fid)
                 found_pipes.append(pipe)
-                print("[+] Found pipe '{}'".format(pipe))
+                print("[+] Found a pipe: '{}'".format(pipe))
                 if firstOnly:
                     break
             except smb.SessionError as e:
@@ -202,6 +214,15 @@ class MYSMB(smb.SMB):
     def login_extended(self, user, password, domain='', lmhash='', nthash='', use_ntlmv2=True, maxBufferSize=None):
         _setup_login_packet_hook(maxBufferSize)
         smb.SMB.login_extended(self, user, password, domain, lmhash, nthash, use_ntlmv2)
+
+    def login_or_fail(self, username, password):
+        try:
+            self.login(username, password)
+        except smb.SessionError as e:
+            print('[-] Login failed: ' + nt_errors.ERROR_MESSAGES[e.error_code][0])
+            sys.exit()
+        finally:
+            print('[*] Target OS: ' + self.get_server_os())
 
     def connect_tree(self, path, password=None, service=smb.SERVICE_ANY, smb_packet=None):
         self._last_tid = smb.SMB.tree_connect_andx(self, path, password, service, smb_packet)
@@ -311,8 +332,9 @@ class MYSMB(smb.SMB):
     def send_trans(self, setup, param='', data='', mid=None, maxSetupCount=None, totalParameterCount=None,
                    totalDataCount=None, maxParameterCount=None, maxDataCount=None, pid=None, tid=None, noPad=False):
         self.send_raw(
-            self.create_trans_packet(setup, param, data, mid, maxSetupCount, totalParameterCount, totalDataCount,
-                                     maxParameterCount, maxDataCount, pid, tid, noPad))
+                    self.create_trans_packet(setup, param, data, mid, maxSetupCount, totalParameterCount,
+                                             totalDataCount,
+                                             maxParameterCount, maxDataCount, pid, tid, noPad))
         return self.recvSMB()
 
     def create_trans_secondary_packet(self, mid, param='', paramDisplacement=0, data='', dataDisplacement=0, pid=None,
@@ -332,7 +354,8 @@ class MYSMB(smb.SMB):
     def send_trans_secondary(self, mid, param='', paramDisplacement=0, data='', dataDisplacement=0, pid=None, tid=None,
                              noPad=False):
         self.send_raw(
-            self.create_trans_secondary_packet(mid, param, paramDisplacement, data, dataDisplacement, pid, tid, noPad))
+                    self.create_trans_secondary_packet(mid, param, paramDisplacement, data, dataDisplacement, pid, tid,
+                                                       noPad))
 
     def create_trans2_packet(self, setup, param='', data='', mid=None, maxSetupCount=None, totalParameterCount=None,
                              totalDataCount=None, maxParameterCount=None, maxDataCount=None, pid=None, tid=None,
@@ -379,7 +402,8 @@ class MYSMB(smb.SMB):
     def send_trans2_secondary(self, mid, param='', paramDisplacement=0, data='', dataDisplacement=0, pid=None, tid=None,
                               noPad=False):
         self.send_raw(
-            self.create_trans2_secondary_packet(mid, param, paramDisplacement, data, dataDisplacement, pid, tid, noPad))
+                    self.create_trans2_secondary_packet(mid, param, paramDisplacement, data, dataDisplacement, pid, tid,
+                                                        noPad))
 
     def create_nt_trans_packet(self, function, setup='', param='', data='', mid=None, maxSetupCount=None,
                                totalParameterCount=None, totalDataCount=None, maxParameterCount=None, maxDataCount=None,
@@ -431,8 +455,9 @@ class MYSMB(smb.SMB):
     def send_nt_trans_secondary(self, mid, param='', paramDisplacement=0, data='', dataDisplacement=0, pid=None,
                                 tid=None, noPad=False):
         self.send_raw(
-            self.create_nt_trans_secondary_packet(mid, param, paramDisplacement, data, dataDisplacement, pid, tid,
-                                                  noPad))
+                    self.create_nt_trans_secondary_packet(mid, param, paramDisplacement, data, dataDisplacement, pid,
+                                                          tid,
+                                                          noPad))
 
     def recv_transaction_data(self, mid, minLen):
         data = ''
@@ -460,7 +485,8 @@ class RemoteShell(cmd.Cmd):
         self.__serviceName = serviceName
         self.__rpc = rpc
         self.intro = '[!] Dropping a semi-interactive shell (remember to escape special chars with ^) \n[!] Executing ' \
-					 'interactive programs will hang shell!'
+                     '' \
+                     'interactive programs will hang shell!'
 
         self.__scmr = rpc.get_dce_rpc('svcctl')
         try:
