@@ -21,7 +21,7 @@ CODEC = sys.stdout.encoding
 
 '''
 MS17-010 exploit for Windows 2000 and later by sleepya
-edited and refactored by derstolz
+edited and refactored by derstolz, evilden91
 
 Note:
 - The exploit should never crash a target (chance should be nearly 0%)
