@@ -13,6 +13,7 @@ from mysmb import MYSMB
 
 '''
 MS17-010 exploit for Windows 2000 and later by sleepya
+edited and refactored by derstolz
 
 Note:
 - The exploit should never crash a target (chance should be nearly 0%)
