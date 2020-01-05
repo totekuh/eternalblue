@@ -188,14 +188,14 @@ class MYSMB(smb.SMB):
             self._last_mid += 0x120
         return self._last_mid
 
-    def get_smbconnection(self):
+    def get_smb_connection(self):
         if self._smbConn is None:
             self.smbConn = smbconnection.SMBConnection(self.get_remote_host(), self.get_remote_host(),
                                                        existingConnection=self)
         return self.smbConn
 
     def get_dce_rpc(self, named_pipe):
-        smbConn = self.get_smbconnection()
+        smbConn = self.get_smb_connection()
         rpctransport = transport.SMBTransport(self.get_remote_host(), self.get_remote_host(),
                                               filename='\\' + named_pipe, smb_connection=smbConn)
         return rpctransport.get_dce_rpc()
@@ -499,7 +499,7 @@ class RemoteShell(cmd.Cmd):
             logging.critical(str(e))
             sys.exit(1)
 
-        s = rpc.get_smbconnection()
+        s = rpc.get_smb_connection()
 
         # We don't wanna deal with timeouts from now on.
         s.setTimeout(100000)
@@ -510,7 +510,7 @@ class RemoteShell(cmd.Cmd):
         self.__scmr.bind(scmr.MSRPC_UUID_SCMR)
         resp = scmr.hROpenSCManagerW(self.__scmr)
         self.__scHandle = resp['lpScHandle']
-        self.transferClient = rpc.get_smbconnection()
+        self.transferClient = rpc.get_smb_connection()
         self.do_cd('')
 
     def finish(self):
